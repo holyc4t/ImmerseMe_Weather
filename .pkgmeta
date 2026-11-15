@@ -1,0 +1,12 @@
+# Used by the BigWigs packager (CurseForge / GitHub releases).
+package-as: ImmerseMe_Weather
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
+ignore:
+  - docs
+  - tools
+  - .github
+  - .gitignore
