@@ -69,16 +69,55 @@ local LEARN_FROM = { Cooking = "hearth", Mining = "forge", Smelting = "forge" }
 local function NearestSpot(maxDist)
 	local x, y, map = PlayerPos()
 	if not x then return nil end
-	local best, bestD
-	for _, list in ipairs({ ns.FireSpots or {}, (db and db.spots) or {} }) do
-		for _, s in ipairs(list) do
-			if s[3] == map then
-				local d = (x - s[1]) ^ 2 + (y - s[2]) ^ 2
-				if d <= maxDist * maxDist and (not bestD or d < bestD) then best, bestD = s, d end
+	local best, bestD = nil, maxDist * maxDist
+	local list = ns.FireSpots
+	for pass = 1, 2 do
+		if list then
+			for i = 1, #list do
+				local s = list[i]
+				if s[3] == map then
+					local dx, dy = x - s[1], y - s[2]
+					local d = dx * dx + dy * dy
+					if d <= bestD then best, bestD = s, d end
+				end
 			end
 		end
+		list = db and db.spots
 	end
 	return best
+end
+
+-- A campfire the player lit themself burns out in a few minutes: cooking on it must not
+-- be remembered as a fire that is always there.
+local CAMPFIRE_SPELL, CAMPFIRE_NAME, CAMPFIRE_SECONDS = 818, "Basic Campfire", 330
+local ownCampfire     -- { x, y, map, at }
+
+local function ByOwnCampfire()
+	if not ownCampfire or GetTime() - ownCampfire.at > CAMPFIRE_SECONDS then return false end
+	local x, y, map = PlayerPos()
+	if not x or not ownCampfire.x then return true end     -- can't tell where we are: don't remember it
+	if map ~= ownCampfire.map then return false end
+	local dx, dy = x - ownCampfire.x, y - ownCampfire.y
+	return dx * dx + dy * dy <= 15 * 15
+end
+
+local function SpellName(spellID)
+	if not spellID then return nil end
+	if GetSpellInfo then return (GetSpellInfo(spellID)) end
+	if C_Spell and C_Spell.GetSpellInfo then
+		local info = C_Spell.GetSpellInfo(spellID)
+		return info and info.name
+	end
+end
+
+-- true when the spell just cast is one of the recipes in the open trade skill window
+-- (any other spell cast while the window happens to be open proves nothing).
+local function IsOpenRecipe(name)
+	if not (name and GetNumTradeSkills and GetTradeSkillInfo) then return false end
+	for i = 1, GetNumTradeSkills() do
+		if GetTradeSkillInfo(i) == name then return true end
+	end
+	return false
 end
 
 -- Remembers a heat source where the player stands. Returns true if it was new.
@@ -100,7 +139,9 @@ local function GameWeather()
 	if type(kind) ~= "number" then return nil end
 	for name, id in pairs(Enum.WeatherType) do
 		if id == kind then
-			return { kind = name:lower(), intensity = type(intensity) == "number" and intensity or 0 }
+			name = name:lower()
+			if name == "none" then name = "clear" end     -- whichever the client calls a dry sky
+			return { kind = name, intensity = type(intensity) == "number" and intensity or 0 }
 		end
 	end
 end
@@ -610,9 +651,14 @@ local function MakeMovable(frame, key)
 	frame:SetClampedToScreen(true)
 	frame:RegisterForDrag("LeftButton")
 	frame:SetScript("OnDragStart", function(self)
-		if not db.locked and not skinned and IsShiftKeyDown() then self:StartMoving() end
+		if not db.locked and not skinned and IsShiftKeyDown() then
+			self.moving = true
+			self:StartMoving()
+		end
 	end)
 	frame:SetScript("OnDragStop", function(self)
+		if not self.moving then return end     -- a plain drag moved nothing: nothing to save
+		self.moving = nil
 		self:StopMovingOrSizing()
 		local point, _, relPoint, x, y = self:GetPoint(1)
 		db[key] = { point, relPoint, x, y }
@@ -633,11 +679,13 @@ end
 -- Refresh
 ---------------------------------------------------------------------------
 local PlaceOrb      -- defined further down, used by Refresh
+local stockMisses = 0     -- searches in a row that found no stock day/night icon
+local STOCK_TRIES = 5     -- after this many, Refresh stops looking (entering the world looks again)
 
 local function Refresh()
 	if not db then return end
 	local w = GetWorld()
-	if db.showOrb and db.useStock and not skinned then PlaceOrb() end
+	if db.showOrb and db.useStock and not skinned and stockMisses < STOCK_TRIES then PlaceOrb() end
 	if stockArt then stockArt:SetAlpha(0) end
 	if stockRing then stockRing:SetAlpha(0) end
 	UpdateOrb(w)
@@ -766,7 +814,10 @@ end
 
 function PlaceOrb()
 	local f, art, ring
-	if db.showOrb and db.useStock then f, art, ring = FindStock() end
+	if db.showOrb and db.useStock then
+		f, art, ring = FindStock()
+		stockMisses = f and 0 or stockMisses + 1
+	end
 	if f then
 		Skin(f, art, ring)
 	else
@@ -803,9 +854,13 @@ events:RegisterEvent("ZONE_CHANGED")
 events:RegisterEvent("ZONE_CHANGED_INDOORS")
 events:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 events:RegisterEvent("PLAYER_UPDATE_RESTING")
-events:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+if events.RegisterUnitEvent then
+	events:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")   -- never woken by anyone else's casts
+else
+	events:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+end
 pcall(events.RegisterEvent, events, "WEATHER_CHANGED")   -- only on clients that report the weather
-events:SetScript("OnEvent", function(_, event, arg1)
+events:SetScript("OnEvent", function(_, event, arg1, _, spellID)
 	if event == "ADDON_LOADED" then
 		if arg1 ~= ADDON then return end
 		ImmerseMeWeatherDB = ImmerseMeWeatherDB or {}
@@ -842,15 +897,26 @@ events:SetScript("OnEvent", function(_, event, arg1)
 	elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
 		-- cooking needs a fire and smelting needs a forge: a successful craft proves one is right here
 		if arg1 ~= "player" or not db then return end
+		local name = SpellName(spellID)
+		if spellID == CAMPFIRE_SPELL or name == CAMPFIRE_NAME then
+			local x, y, map = PlayerPos()
+			ownCampfire = { x = x, y = y, map = map, at = GetTime() }
+			return
+		end
 		local open = TradeSkillFrame and TradeSkillFrame:IsShown()
 		local kind = open and GetTradeSkillLine and LEARN_FROM[(GetTradeSkillLine())]
+		if kind and not IsOpenRecipe(name) then kind = nil end
+		if kind == "hearth" and ByOwnCampfire() then kind = nil end
 		if kind and RememberSpot(kind) then
 			print("|cffd8b25aImmerseMe: Weather|r You'll remember the warmth of this "
 				.. (kind == "forge" and "forge." or "fire."))
 			SafeRefresh()
 		end
 	elseif db then
-		if event == "PLAYER_ENTERING_WORLD" then ApplyHidden(); PlaceOrb(); LayoutReadout() end
+		if event == "PLAYER_ENTERING_WORLD" then
+			stockMisses = 0
+			ApplyHidden(); PlaceOrb(); LayoutReadout()
+		end
 		SafeRefresh()
 	end
 end)

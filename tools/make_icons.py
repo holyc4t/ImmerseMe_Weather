@@ -394,6 +394,53 @@ def wavy(c, x0, x1, y0, amp, period, half, color, alpha, phase=0.0, soft=1.2):
     c.glow(sdf, (X0 - H, Y0 - A - H, X1 + H, Y0 + A + H), color, alpha, soft * K)
 
 
+def veil(c, top_col, bottom_col, top, depth, density, haze, wisps, ripple=0.0):
+    """Ground mist: a soft bank that thickens towards the bottom of the orb, with an uneven,
+    billowing upper edge and a few blurred wisps drifting above it. No hard edges anywhere, so
+    the sun / moon glows through it instead of being crossed out.
+    top = where the bank begins (64 grid), depth = how far down it takes to reach `density`,
+    haze = faint veil over the whole orb, wisps = [(cx, cy, half_width, half_height, alpha)],
+    ripple = 0..1, how strongly the bank wavers like hot air (soft, never separate lines)."""
+    for py in range(N):
+        y = (py + .5) / K
+        for px in range(N):
+            x = (px + .5) / K
+            # the bank's upper edge rolls like low cloud
+            edge = top + 2.6 * math.sin(x * 0.21 + 0.6) + 1.5 * math.sin(x * 0.47 + 2.1)
+            a = haze + (density - haze) * smoothstep(0.0, 1.0, (y - edge) / depth)
+            # slow, cloudy unevenness inside the bank
+            a *= 0.88 + 0.12 * math.sin(x * 0.33 + y * 0.12 + 1.0) * math.sin(y * 0.29 - x * 0.07)
+            if ripple:
+                a *= 1.0 - ripple * (0.5 + 0.5 * math.sin(y * 1.05 + 2.2 * math.sin(x * 0.23 + 0.4)))
+            for cx, cy, sx, sy, wa in wisps:
+                dx = (x - cx) / sx
+                dy = (y - cy - 1.4 * math.sin(x * 0.19 + cx)) / (sy * (1.0 - 0.45 * clamp(abs(dx))))
+                a = 1.0 - (1.0 - a) * (1.0 - wa * math.exp(-dx * dx * 1.6 - dy * dy))
+            c._blend(px, py, mix(top_col, bottom_col, clamp((y - top) / (64 - top))), clamp(a))
+
+
+def dust(c, col, light, haze, density, gusts, tilt=-0.20):
+    """Blowing sand: a tan pall over the whole orb, thickest near the ground, torn into soft,
+    slanted gusts that swell towards their leading end. Nothing here has a hard edge.
+    gusts = [(cx, cy, half_length, half_thickness, alpha)] on the 64 grid; tilt in radians."""
+    ct, st = math.cos(tilt), math.sin(tilt)
+    for py in range(N):
+        y = (py + .5) / K
+        for px in range(N):
+            x = (px + .5) / K
+            a = haze + (density - haze) * smoothstep(0.0, 1.0, (y - 14 - 3 * math.sin(x * 0.17 + 0.8)) / 44)
+            a *= 0.86 + 0.14 * math.sin(x * 0.27 - y * 0.21 + 0.5) * math.sin(y * 0.35 + x * 0.09)
+            s = 0.0
+            for cx, cy, sx, sy, ga in gusts:
+                u = (x - cx) * ct + (y - cy) * st
+                v = -(x - cx) * st + (y - cy) * ct - 1.3 * math.sin(u * 0.22 + cx)
+                du = u / sx
+                thick = sy * (0.55 + 0.45 * clamp((du + 1) / 2))      # swells downwind
+                s = 1.0 - (1.0 - s) * (1.0 - ga * math.exp(-du * du * 1.5 - (v / thick) ** 2))
+            total = 1.0 - (1.0 - a) * (1.0 - s)
+            c._blend(px, py, mix(col, light, s / total if total > 0 else 0.0), clamp(total))
+
+
 def overlay(name, night):
     c = Canvas()
     tod = "night" if night else "day"
@@ -405,14 +452,14 @@ def overlay(name, night):
         draw_cloud(c, *HEAVY_BACK, *pal(tod, "dark"))
         draw_cloud(c, *HEAVY, *pal(tod, "grey"))
     elif name == "mist":
-        col = (0.95, 0.96, 1.0) if not night else (0.72, 0.76, 0.95)
-        for i, y in enumerate((36, 44, 52)):
-            soft_band(c, 8 + (i % 2) * 6, 56 - ((i + 1) % 2) * 6, y, 2.6, col, 0.8)
+        cols = ((0.97, 0.98, 1.0), (0.84, 0.88, 0.96)) if not night else ((0.74, 0.78, 0.96), (0.52, 0.56, 0.80))
+        veil(c, *cols, top=30, depth=24, density=0.80, haze=0.10,
+             wisps=[(20, 29, 15, 3.2, 0.50), (45, 36, 16, 3.6, 0.42), (27, 45, 19, 4.0, 0.36)])
     elif name == "fog":
-        col = (0.92, 0.93, 0.98) if not night else (0.62, 0.66, 0.86)
-        draw_cloud(c, *HEAVY_BACK, *pal(tod, "grey"), alpha=0.55)
-        for i, y in enumerate((22, 30, 38, 46, 54)):
-            soft_band(c, 6 + (i % 2) * 4, 58 - ((i + 1) % 2) * 4, y, 3.6, col, 0.88)
+        # the same bank as mist, but it has risen to swallow nearly the whole sky
+        cols = ((0.94, 0.95, 0.99), (0.78, 0.81, 0.90)) if not night else ((0.64, 0.68, 0.88), (0.42, 0.46, 0.68))
+        veil(c, *cols, top=13, depth=22, density=0.94, haze=0.38,
+             wisps=[(24, 14, 17, 3.8, 0.50), (44, 23, 18, 4.2, 0.45), (22, 33, 20, 4.5, 0.40)])
     elif name == "drizzle":
         draw_cloud(c, *PRECIP, *pal(tod, "grey"))
         rain(c, 1, night, light=True)
@@ -440,15 +487,18 @@ def overlay(name, night):
         for x, y in ((40, 44), (14, 50), (50, 48), (22, 56), (45, 57), (33, 51)):
             snowflake(c, x, y, 2.5)
     elif name == "haze":
-        col = (1.0, 0.86, 0.55) if not night else (0.80, 0.68, 0.62)
-        for i, y in enumerate((40, 47, 54)):
-            wavy(c, 9 + i * 3, 55 - i * 3, y, 1.8, 11, 1.0, col, 0.9, i * 4)
+        # heat rising off the ground: a warm glow low in the orb that wavers as it climbs
+        cols = ((1.0, 0.92, 0.66), (1.0, 0.78, 0.44)) if not night else ((0.80, 0.70, 0.64), (0.62, 0.52, 0.46))
+        veil(c, *cols, top=26, depth=24, density=0.84, haze=0.14, ripple=0.34,
+             wisps=[(22, 30, 16, 3.2, 0.34), (45, 38, 17, 3.4, 0.30)])
     elif name == "sandstorm":
-        sand = (0.90, 0.72, 0.42) if not night else (0.58, 0.46, 0.34)
-        for i, y in enumerate((18, 27, 36, 45, 54)):
-            wavy(c, 4 + (i % 2) * 6, 60 - ((i + 1) % 2) * 6, y, 1.6, 22, 1.7, sand, 0.8, i * 1.5, soft=2.2)
-        for x, y in ((14, 22), (44, 31), (22, 40), (50, 49), (30, 57), (40, 15), (54, 22)):
-            c.fill(circle(x, y, 1.3), (0.45, 0.30, 0.15))
+        sand, light = ((0.84, 0.64, 0.36), (0.98, 0.85, 0.60)) if not night else ((0.50, 0.39, 0.28), (0.70, 0.58, 0.44))
+        dust(c, sand, light, haze=0.34, density=0.86,
+             gusts=[(22, 15, 20, 3.4, 0.50), (46, 25, 18, 3.8, 0.55), (20, 34, 22, 4.2, 0.55),
+                    (44, 43, 20, 4.4, 0.50), (24, 53, 22, 4.6, 0.45)])
+        # grit caught in the wind: short flecks flying with the gusts
+        for x, y in ((14, 22), (44, 33), (23, 42), (51, 50), (31, 58), (40, 14), (55, 20)):
+            c.fill(capsule(x, y, x + 2.6, y - 0.5, 0.6), (0.42, 0.27, 0.12), 0.85)
     elif name == "ashfall":
         smoke = ((0.48, 0.44, 0.46), (0.24, 0.20, 0.22), (0.06, 0.03, 0.03), (0.70, 0.55, 0.45)) if not night else \
                 ((0.32, 0.27, 0.30), (0.14, 0.11, 0.13), (0.02, 0.01, 0.01), (0.65, 0.35, 0.20))
