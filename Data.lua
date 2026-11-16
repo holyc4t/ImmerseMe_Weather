@@ -42,6 +42,30 @@ ns.SkyMood = {
 -- Stars show through these at night.
 ns.StarrySky = { clear = true, fair = true, haze = true }
 
+-- What the game itself reports (C_Weather) -> our sky condition. Each kind is a
+-- ladder of { intensity below this, condition }. When the game says the sky is
+-- clear, any simulated rain / snow / dust falls back to the nearest dry sky.
+ns.GameWeather = {
+	rain      = { { 0.4, "drizzle" },  { 0.7, "rain" }, { 1e9, "storm" } },
+	snow      = { { 0.4, "flurries" }, { 0.7, "snow" }, { 1e9, "blizzard" } },
+	sandstorm = { { 1e9, "sandstorm" } },
+}
+-- Conditions the game would show as weather; never invented while the game reports a clear sky.
+ns.Precipitation = { drizzle = true, rain = true, storm = true, flurries = true, snow = true,
+                     blizzard = true, sandstorm = true }
+
+-- Rain and snow falling inside the orb. n = how many drops / flakes at once,
+-- speed = orb heights per second, rain = streaks instead of flakes,
+-- slant = sideways drift per unit of fall (negative blows to the left).
+ns.OrbParticles = {
+	drizzle  = { n = 4,  speed = 1.1, rain = true },
+	rain     = { n = 8,  speed = 1.7, rain = true },
+	storm    = { n = 12, speed = 2.3, rain = true, slant = -0.35 },
+	flurries = { n = 4,  speed = 0.28 },
+	snow     = { n = 8,  speed = 0.38 },
+	blizzard = { n = 14, speed = 0.8, slant = -1.1 },
+}
+
 local ICON = "Interface\\Icons\\"
 
 -- Orb / clear-sky icons

@@ -84,7 +84,28 @@ end
 local FREEZE = { drizzle = "flurries", rain = "snow", storm = "blizzard" }
 local THAW   = { flurries = "drizzle", snow = "rain", blizzard = "storm" }
 
+-- Bends the simulated sky to what the game is really doing.
+-- real = { kind = "clear" | "rain" | "snow" | "sandstorm", intensity = number }
+local function observed(climate, key, real)
+	local ladder = ns.GameWeather[real.kind]
+	if ladder then
+		for _, step in ipairs(ladder) do
+			if real.intensity < step[1] then return step[2] end
+		end
+		return ladder[#ladder][2]
+	end
+	if real.kind ~= "clear" or not ns.Precipitation[key] then return key end
+	-- the game shows a dry sky: step down the zone's ladder to its nearest dry condition
+	local dry = "overcast"
+	for _, s in ipairs(climate.sky) do
+		if s[1] == key then break end
+		if not ns.Precipitation[s[1]] then dry = s[1] end
+	end
+	return dry
+end
+
 -- zone: zone name, t: realm epoch seconds, hour: fractional hour of day (0-24),
+-- opts.weather: what the game reports right now (see observed above), if the client can tell.
 -- opts.instance / opts.sheltered / opts.heated: player is in an instance / under a roof /
 -- in a warmed building (an inn, a tavern, a city hall: anywhere the game lets you rest).
 -- opts.heat: a key of ns.HeatSources when the player is standing by a fire or forge.
@@ -109,12 +130,17 @@ function ns.Simulate(zone, t, hour, opts)
 	local key = climate.indoor and "indoors" or pickCondition(climate, wet)
 	if temp < -1 and FREEZE[key] then key = FREEZE[key] end
 	if temp > 3 and THAW[key] then key = THAW[key] end
+	local real = not climate.indoor and opts.weather or nil
+	if real then key = observed(climate, key, real) end
 	local cond = ns.Conditions[key]
 
 	-- a clear night is colder than a clear day is warm
 	local condTemp = cond.temp
 	if isNight and (key == "clear" or key == "haze") then condTemp = -condTemp end
 	temp = temp + condTemp
+	-- the thermometer has to agree with what is actually falling
+	if real and real.kind == "snow" then temp = min(temp, 0) end
+	if real and real.kind == "rain" then temp = max(temp, 1) end
 
 	local hum = climate.hum + quirkH + cond.hum - diurnal * 1.2
 	          + (smooth(zone .. ":h", t / 14400) - 0.5) * 12
@@ -223,6 +249,10 @@ end
 
 -- What the sky will be doing a few hours from now (for the "outlook" line).
 function ns.Outlook(zone, t, hour, opts, hoursAhead)
-	local w = ns.Simulate(zone, t + hoursAhead * 3600, (hour + hoursAhead) % 24, opts)
+	-- a forecast: what the game shows now says nothing about later
+	local ahead = {}
+	for k, v in pairs(opts or {}) do ahead[k] = v end
+	ahead.weather = nil
+	local w = ns.Simulate(zone, t + hoursAhead * 3600, (hour + hoursAhead) % 24, ahead)
 	return w.label, w.phase
 end
