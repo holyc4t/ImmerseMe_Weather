@@ -89,6 +89,22 @@ local function RememberSpot(kind)
 	return true
 end
 
+-- What the game is really doing, on clients that can tell (C_Weather):
+-- { kind = "clear" | "rain" | "snow" | "sandstorm" | ..., intensity = number }, or nil.
+local function GameWeather()
+	if not (C_Weather and C_Weather.GetCurrentWeather and Enum and Enum.WeatherType) then return nil end
+	local ok, info = pcall(C_Weather.GetCurrentWeather)
+	if not ok or type(info) ~= "table" then return nil end
+	local kind, intensity = info.type, info.intensity
+	if issecretvalue and (issecretvalue(kind) or issecretvalue(intensity)) then return nil end
+	if type(kind) ~= "number" then return nil end
+	for name, id in pairs(Enum.WeatherType) do
+		if id == kind then
+			return { kind = name:lower(), intensity = type(intensity) == "number" and intensity or 0 }
+		end
+	end
+end
+
 local function GetWorld()
 	local hour, h, m = GetHour()
 	local t = (GetServerTime and GetServerTime()) or time()
@@ -102,6 +118,7 @@ local function GetWorld()
 		heated    = IsResting and IsResting() or false,   -- inns, taverns, city buildings
 		heat      = (fire and fire.kind) or (NearestSpot(SPOT_RANGE) or {})[4]
 			or (indoors and ns.WarmPlaces[subzone]) or nil,
+		weather   = GameWeather(),
 	}
 	local w = ns.Simulate(zone, t, hour, opts)
 	w.clock = ("%02d:%02d"):format(h, m)
@@ -204,7 +221,9 @@ orb.horizon = orb.window:CreateTexture(nil, "BACKGROUND", nil, 1)
 orb.stars   = orb.window:CreateTexture(nil, "BACKGROUND", nil, 2)
 orb.base    = orb.window:CreateTexture(nil, "ARTWORK", nil, 1)
 orb.wx      = orb.window:CreateTexture(nil, "ARTWORK", nil, 2)
-for _, key in ipairs({ "sky", "horizon", "stars", "wx" }) do orb[key]:SetAllPoints() end
+orb.wxOld   = orb.window:CreateTexture(nil, "ARTWORK", nil, 3)   -- the weather that is fading out
+orb.wxOld:Hide()
+for _, key in ipairs({ "sky", "horizon", "stars", "wx", "wxOld" }) do orb[key]:SetAllPoints() end
 orb.sky:SetTexture(MEDIA .. "sky")
 orb.horizon:SetTexture(MEDIA .. "horizon")
 orb.stars:SetTexture(MEDIA .. "stars")
@@ -213,7 +232,8 @@ if orb.CreateMaskTexture then
 	local mask = orb.window:CreateMaskTexture()
 	mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
 	mask:SetAllPoints(orb.window)
-	for _, tex in ipairs({ orb.sky, orb.horizon, orb.stars, orb.base, orb.wx }) do tex:AddMaskTexture(mask) end
+	orb.mask = mask
+	for _, tex in ipairs({ orb.sky, orb.horizon, orb.stars, orb.base, orb.wx, orb.wxOld }) do tex:AddMaskTexture(mask) end
 end
 
 orb.border = orb:CreateTexture(nil, "OVERLAY")
@@ -247,8 +267,136 @@ local function BodySize(key, isSun, lift)
 	return isSun and 0.8 or 0.78, 0
 end
 
+-- The orb never jumps from one sky to the next: when the weather changes, the old
+-- weather fades out while the new one fades in, and the sky colour, the horizon
+-- glow, the stars and the sun / moon all glide to their new look over FADE seconds.
+local FADE = 3
+local anim = {}     -- cur / start / goal: tables of the numbers below; f: arc position; path: weather art; t: seconds in
+local fader = CreateFrame("Frame")
+fader:Hide()
+
+local function ApplyOrb()
+	local c = anim.cur
+	orb.sky:SetVertexColor(c.skyR, c.skyG, c.skyB)
+	orb.horizon:SetVertexColor(c.glowR, c.glowG, c.glowB)
+	orb.horizon:SetAlpha(c.glow)
+	orb.stars:SetAlpha(c.stars)
+	orb.stars:SetShown(c.stars > 0.01)
+	orb.wx:SetAlpha(c.wx)
+	orb.wx:SetShown(c.wx > 0.01)
+	orb.wxOld:SetAlpha(c.wxOld)
+	orb.wxOld:SetShown(c.wxOld > 0.01)
+	PlaceBody(anim.f, c.size, c.raise)
+	orb.base:SetVertexColor(1, c.bodyG, c.bodyB)
+end
+
+fader:SetScript("OnUpdate", function(self, elapsed)
+	anim.t = anim.t + elapsed
+	local p = min(1, anim.t / FADE)
+	p = p * p * (3 - 2 * p)
+	for k, v in pairs(anim.goal) do
+		anim.cur[k] = anim.start[k] + (v - anim.start[k]) * p
+	end
+	if anim.t >= FADE then self:Hide() end
+	ApplyOrb()
+end)
+
+-- Rain and snow falling inside the orb (ns.OrbParticles). Drops and flakes fall from
+-- under the cloud to the bottom of the orb. When the weather changes, the ones in
+-- the air finish their fall and the new kind starts from the top, so it never pops.
+local FALL_TOP, FALL_BOTTOM = 0.12, -0.5      -- in orb widths, from the orb's centre
+local random = math.random
+local particles, fallCfg, fallSnap = {}, nil, false
+local faller = CreateFrame("Frame", nil, orb.window)
+faller:Hide()
+
+local function Particle(i)
+	local p = particles[i]
+	if not p then
+		p = { tex = orb.window:CreateTexture(nil, "ARTWORK", nil, 4) }
+		p.tex:SetTexture("Interface\\Buttons\\WHITE8X8")
+		p.tex:Hide()
+		if orb.mask then p.tex:AddMaskTexture(orb.mask) end
+		particles[i] = p
+	end
+	return p
+end
+
+local function Spawn(p, cfg, W, anywhere)
+	p.active, p.wait = true, nil
+	p.rain = cfg.rain or false
+	p.vy = cfg.speed * (0.8 + 0.4 * random())
+	p.vx = (cfg.slant or 0) * p.vy
+	p.y = anywhere and (FALL_BOTTOM + (FALL_TOP - FALL_BOTTOM) * random()) or FALL_TOP
+	-- start far enough upwind that a slanted fall still crosses the orb
+	p.x = (random() - 0.5) * 0.9 - (cfg.slant or 0) * (FALL_TOP - FALL_BOTTOM) * 0.5
+	p.phase = random() * 6.28
+	if p.rain then
+		p.tex:SetSize(max(1, W * 0.045), W * 0.2)
+		p.tex:SetVertexColor(0.72, 0.84, 1)
+		p.base = 0.7
+	else
+		local s = max(1.2, W * (0.07 + 0.05 * random()))
+		p.tex:SetSize(s, s)
+		p.tex:SetVertexColor(1, 1, 1)
+		p.base = 0.95
+	end
+	if p.tex.SetRotation then p.tex:SetRotation(p.rain and math.atan(cfg.slant or 0) or 0) end
+	p.tex:Show()
+end
+
+local function StopFalling()
+	fallCfg = nil
+	for _, p in ipairs(particles) do
+		p.active, p.wait = false, nil
+		p.tex:Hide()
+	end
+	faller:Hide()
+end
+
+faller:SetScript("OnUpdate", function(self, elapsed)
+	local W = orb.window:GetWidth() or ORB_ICON
+	local cfg, busy = fallCfg, false
+	for i = 1, max(#particles, cfg and cfg.n or 0) do
+		local p = Particle(i)
+		if p.active then
+			p.y = p.y - p.vy * elapsed
+			p.x = p.x + p.vx * elapsed
+			if p.y <= FALL_BOTTOM then
+				p.active = false
+				p.tex:Hide()
+			else
+				local sway = p.rain and 0 or math.sin(p.phase + p.y * 9) * 0.035
+				p.tex:SetPoint("CENTER", orb.window, "CENTER", (p.x + sway) * W, p.y * W)
+				-- appear under the cloud, melt away at the bottom
+				p.tex:SetAlpha(p.base * max(0, min(1, (FALL_TOP - p.y) / 0.1, (p.y - FALL_BOTTOM) / 0.12)))
+			end
+		end
+		if not p.active and cfg and i <= cfg.n then
+			if fallSnap then
+				Spawn(p, cfg, W, true)
+			else
+				-- a short random wait so they don't fall in a row
+				p.wait = (p.wait or random() * 0.9 / cfg.speed) - elapsed
+				if p.wait <= 0 then Spawn(p, cfg, W) end
+			end
+		end
+		busy = busy or p.active
+	end
+	fallSnap = false
+	if not cfg and not busy then self:Hide() end
+end)
+
 local function UpdateOrb(w)
+	fallCfg = not w.indoor and ns.OrbParticles[w.key] or nil
+	if fallCfg then
+		if not anim.cur then fallSnap = true end    -- first look: already falling
+		faller:Show()
+	end
 	if w.indoor then
+		StopFalling()
+		fader:Hide()
+		anim.cur = nil      -- stepping back outside shows the sky at once
 		orb.sky:SetVertexColor(0.30, 0.20, 0.12)
 		orb.horizon:SetVertexColor(1.0, 0.6, 0.25)
 		orb.horizon:SetAlpha(0.5)
@@ -259,42 +407,60 @@ local function UpdateOrb(w)
 		orb.base:ClearAllPoints()
 		orb.base:SetAllPoints(orb.window)
 		orb.wx:Hide()
+		orb.wxOld:Hide()
 		return
 	end
 	orb.base:SetTexCoord(0, 1, 0, 1)
 
+	-- how the orb should look for this sky
 	local mood = ns.SkyMood[w.key] or "clear"
 	local sky, glowCol, glow = ns.SkyAt(w.hour, mood)
-	orb.sky:SetVertexColor(sky[1], sky[2], sky[3])
-	orb.horizon:SetVertexColor(glowCol[1], glowCol[2], glowCol[3])
-	orb.horizon:SetAlpha(glow)
+	local g = { skyR = sky[1], skyG = sky[2], skyB = sky[3],
+	            glowR = glowCol[1], glowG = glowCol[2], glowB = glowCol[3], glow = glow, wxOld = 0 }
 
 	local f, isSun = ns.ArcAt(w.hour)
+	local lift = math.sin(math.pi * f)
 	if isSun then
-		orb.stars:Hide()
 		orb.base:SetTexture(MEDIA .. "sun")
-		local lift = math.sin(math.pi * f)
-		PlaceBody(f, BodySize(w.key, true, lift))
+		g.size, g.raise = BodySize(w.key, true, lift)
 		-- a low sun burns orange
 		local low = 1 - math.min(1, lift * 2.2)
-		orb.base:SetVertexColor(1, 1 - 0.28 * low, 1 - 0.45 * low)
+		g.bodyG, g.bodyB = 1 - 0.28 * low, 1 - 0.45 * low
+		g.stars = 0
 	else
 		orb.base:SetTexture(MEDIA .. "moon_" .. (w.moonIndex or 4))
-		orb.base:SetVertexColor(1, 1, 1)
-		local lift = PlaceBody(f, BodySize(w.key, false, 0))
-		if ns.StarrySky[w.key] then
-			orb.stars:SetAlpha(0.45 + 0.55 * lift)
-			orb.stars:Show()
-		else
-			orb.stars:Hide()
-		end
+		g.size, g.raise = BodySize(w.key, false, 0)
+		g.bodyG, g.bodyB = 1, 1
+		g.stars = ns.StarrySky[w.key] and (0.45 + 0.55 * lift) or 0
 	end
 
-	if w.key == "clear" then
-		orb.wx:Hide()
+	local path = w.key ~= "clear" and (MEDIA .. "wx_" .. w.key .. (w.isNight and "_night" or "_day")) or nil
+	g.wx = path and 1 or 0
+	anim.f = f
+
+	local c = anim.cur
+	if not c then
+		-- first look at the sky: no transition
+		if path then orb.wx:SetTexture(path) end
+		anim.cur, anim.goal, anim.path = g, g, path
+		fader:Hide()
+		ApplyOrb()
+	elseif path ~= anim.path then
+		-- the weather turned: hand the current art to the fading layer and bring the new one in
+		if anim.path then orb.wxOld:SetTexture(anim.path) end
+		c.wxOld, c.wx = c.wx, 0
+		if path then orb.wx:SetTexture(path) end
+		anim.path = path
+		anim.start = {}
+		for k, v in pairs(c) do anim.start[k] = v end
+		anim.goal, anim.t = g, 0
+		fader:Show()
+		ApplyOrb()
+	elseif fader:IsShown() then
+		anim.goal = g       -- still turning: keep gliding, towards the latest reading
 	else
-		orb.wx:SetTexture(MEDIA .. "wx_" .. w.key .. (w.isNight and "_night" or "_day"))
-		orb.wx:Show()
+		anim.cur, anim.goal = g, g
+		ApplyOrb()
 	end
 end
 
@@ -638,6 +804,7 @@ events:RegisterEvent("ZONE_CHANGED_INDOORS")
 events:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 events:RegisterEvent("PLAYER_UPDATE_RESTING")
 events:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+pcall(events.RegisterEvent, events, "WEATHER_CHANGED")   -- only on clients that report the weather
 events:SetScript("OnEvent", function(_, event, arg1)
 	if event == "ADDON_LOADED" then
 		if arg1 ~= ADDON then return end
@@ -743,6 +910,9 @@ SlashCmdList.IMMERSEMEWEATHER = function(input)
 				x and floor(x) or "-", y and floor(y) or "-", floor(f:GetWidth()), floor(f:GetHeight()))
 		end
 		Print("client " .. tostring((select(4, GetBuildInfo()))) .. ", orb: " .. desc(orb))
+		local gw = GameWeather()
+		Print("game weather: " .. (gw and ("%s, intensity %.2f"):format(gw.kind, gw.intensity)
+			or "not reported by this client (simulated only)") .. "; showing " .. GetWorld().key)
 		local ww, wh = orb.window:GetSize()
 		Print(("window %.1fx%.1f visible=%s, last error: %s"):format(ww, wh, tostring(orb.window:IsVisible()), tostring(lastError)))
 		for _, key in ipairs({ "sky", "horizon", "stars", "base", "wx" }) do
