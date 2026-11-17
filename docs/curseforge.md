@@ -1,49 +1,62 @@
 <!--
-Text for the CurseForge project page. CurseForge accepts Markdown:
-paste everything below the line into the project description.
-Upload docs/images/minimap.png and docs/images/icons.png as project images
-and replace the image links with the CurseForge-hosted URLs.
+CurseForge project page for ImmerseMe: Weather. Paste everything below the line into the
+project's Description (Markdown).
 
-Summary field (max 125 characters):
-Living, shared weather on your minimap: sun, moon phases, clouds, rain, snow and fog, plus temperature, wind and humidity.
+  Summary (max 125 characters):
+    Living, shared weather on your minimap: sun, moon phases, rain, snow and fog, plus temperature, wind and humidity.
+  Main category: Roleplay        License: MIT
+  Avatar: docs/images/avatar.png (512x512)
+  Gallery: docs/images/minimap.png, tooltip.png, icons.png, together.png
+  Source: https://github.com/holyc4t/ImmerseMe_Weather
+  Issues: https://github.com/holyc4t/ImmerseMe_Weather/issues
+
+Once the Geography and Seasons projects exist, point their links below at their CurseForge pages.
 -->
 ---
 
 # ImmerseMe: Weather
 
-**Living weather for roleplayers.** Every zone gets a climate and a sky that changes over hours.
-Everyone running the addon sees the same weather.
+**Living weather on your minimap, for roleplayers.**
 
-![Minimap](images/minimap.png)
+A small sky orb shows the time of day, the moon's phase and what the sky is doing: cloud, rain, fog,
+storms, snow, dust or ash. Next to it, a quiet readout gives the temperature, wind, humidity and air
+pressure. Hover either one for the full picture.
 
-## What you get
+![The sky orb and readout](https://raw.githubusercontent.com/holyc4t/ImmerseMe_Weather/main/docs/images/minimap.png)
 
-- **A sky orb on the minimap**: the sun by day and the moon in its real phase by night. Clouds, rain,
-  snow, fog, storms, dust and ash are drawn over it. A cloudy night shows the moon peeking from behind the clouds.
-- **A compact readout** that hugs the minimap: temperature, wind, humidity, barometer.
-- **A warm / cold badge** based on how it *feels*, including wind chill and muggy heat.
-- **A climate for every zone**: Tanaris bakes, Dun Morogh snows, Duskwood drowns in fog,
-  the Burning Steppes rain ash, and Ironforge and instances are under stone.
-- **Shared and stable**: weather comes from the zone and the realm clock, so your RP partner sees
-  the same rain you do, and a reload never re-rolls it.
-- **A tooltip** with the sky description, feels-like temperature, wind strength, barometer trend,
-  moon phase, a 3-hour outlook and flavour text.
-- **`/imw emote`** shares the conditions with people nearby.
+## What it does
 
-![Orb states](images/icons.png)
+- **A sky for every zone.** Tanaris bakes, Dun Morogh snows, Duskwood sits in fog, the Burning
+  Steppes rain ash. Ironforge and dungeons are under stone, out of the wind.
+- **Everyone sees the same weather.** It comes from the zone and the realm clock, so when you say
+  "it's raining", your roleplay partner sees the rain too. A `/reload` never changes it.
+- **Weather changes slowly**, over hours. A falling barometer warns of a storm.
+- **Inns are warm, and so are fires.** Step into a tavern and watch the temperature climb.
+- **A detailed tooltip**: how it feels, the wind, the moon and a 3-hour outlook.
+
+![The tooltip](https://raw.githubusercontent.com/holyc4t/ImmerseMe_Weather/main/docs/images/tooltip.png)
 
 ## Commands
 
-Type `/imw help` in game. The most used:
+- `/imw` - today's weather in chat
+- `/imw emote` - describe the weather to the people around you
+- `/imw c` / `/imw f` - Celsius or Fahrenheit
+- `/imw kmh` / `/imw mph` - wind speed unit
+- `/imw fire` - you're by a fire: warm up (it's remembered next time)
+- `/imw help` - every other command
 
-- `/imw` prints the current conditions
-- `/imw f` / `/imw c` switch between Fahrenheit and Celsius
-- `/imw mph` / `/imw kmh` switch the wind unit
-- `/imw y -10` moves the readout lower, and `/imw arc high|middle|low` picks where it sits on the minimap edge
-- `/imw readout`, `/imw orb`, `/imw icon` show or hide each part
+`/weather` works too.
 
-## Part of ImmerseMe
+## Good to know
 
-ImmerseMe is a growing family of small, independent roleplay addons. Survival, Campfire, Calendar and Journal are planned.
+- **English only** for now: all of the addon's text is in English, and it is only tested with an
+  English game client.
+- After installing, restart the game once (a `/reload` doesn't load new textures).
+- Part of **ImmerseMe**, a family of small roleplay addons that each work on their own. Pairs well
+  with [ImmerseMe: Geography](https://github.com/holyc4t/ImmerseMe_Geography) (the land) and
+  [ImmerseMe: Seasons](https://github.com/holyc4t/ImmerseMe_Seasons) (the year).
 
-Source, documentation and issue tracker: *(add the GitHub link here)*
+Bugs and ideas: [GitHub issues](https://github.com/holyc4t/ImmerseMe_Weather/issues).
+
+*World of Warcraft is a trademark of Blizzard Entertainment. This is a fan project, not affiliated
+with or endorsed by Blizzard.*
