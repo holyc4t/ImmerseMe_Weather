@@ -1,0 +1,70 @@
+# Runs when a pull request is merged into main. The pull request title decides the release:
+#   refactor: ...  -> major (2.0.0)    feat: ... -> minor (1.1.0)    fix: / perf: ... -> patch (1.0.1)
+#   docs: / chore: / ci: / test: / build: / style: ...  -> no release
+# It tags the commit vX.Y.Z and publishes a GitHub release with the addon zip attached. It never
+# commits to main, and it does not upload to CurseForge.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find the merged pull request
+        id: pr
+        env:
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+            --jq '[.[] | select(.merged_at != null)][0] // {}' > pr.json
+          jq -r '.title // ""' pr.json > title.txt
+          jq -r '.body // ""' pr.json > body.md
+          echo "number=$(jq -r '.number // ""' pr.json)" >> "$GITHUB_OUTPUT"
+          if [ ! -s title.txt ] || [ "$(cat title.txt)" = "" ]; then
+            # No pull request found: fall back to the commit subject, minus a trailing "(#12)".
+            printf '%s\n' "$HEAD_MESSAGE" | head -n1 | sed -E 's/ \(#[0-9]+\)$//' > title.txt
+          fi
+          echo "Title: $(cat title.txt)"
+
+      - name: Work out the version
+        id: plan
+        run: |
+          python3 .github/scripts/release.py plan \
+            --title "$(cat title.txt)" --number "${{ steps.pr.outputs.number }}" --body-file body.md
+
+      - name: Install Lua 5.1
+        if: steps.plan.outputs.release == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1
+
+      - name: Run the tests
+        if: steps.plan.outputs.release == 'true'
+        run: lua5.1 tests/run.lua
+
+      - name: Build the addon zip
+        id: pkg
+        if: steps.plan.outputs.release == 'true'
+        run: python3 .github/scripts/release.py package --version "${{ steps.plan.outputs.version }}" --notes notes.md
+
+      - name: Publish the GitHub release
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          gh release create "v${{ steps.plan.outputs.version }}" "${{ steps.pkg.outputs.zip }}" \
+            --target "${{ github.sha }}" --title "v${{ steps.plan.outputs.version }}" \
+            --notes-file notes.md --latest

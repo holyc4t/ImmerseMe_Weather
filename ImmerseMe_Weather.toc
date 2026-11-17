@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: ImmerseMe: Weather
+## Notes: Living weather on your minimap: a sun/moon orb that shows the sky (clouds, rain, snow, fog...) and a compact temperature, wind, humidity and barometer readout for every zone.
+## Author: holyc4t
+## Version: @project-version@
+## IconTexture: Interface\AddOns\ImmerseMe_Weather\Media\icon
+## X-Category: Roleplay
+## X-Suite: ImmerseMe
+## X-License: MIT
+## SavedVariables: ImmerseMeWeatherDB
+
+Data.lua
+Core.lua
+UI.lua

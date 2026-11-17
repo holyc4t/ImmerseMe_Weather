@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.tga binary
+*.png binary
+
+# Left out of the release zip (git archive)
+/.github export-ignore
+/docs export-ignore
+/tools export-ignore
+/tests export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/CONTRIBUTING.md export-ignore

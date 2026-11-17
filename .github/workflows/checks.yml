@@ -1,0 +1,48 @@
+# Runs on every pull request. Make "PR title" and "Tests" required checks in the branch rules.
+name: Checks
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    name: PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the title's type (refactor / feat / fix / ...)
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: python3 .github/scripts/release.py check-title "$TITLE"
+
+  tests:
+    name: Tests
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua 5.1 (the game's version)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1
+      - name: Run the tests
+        run: lua5.1 tests/run.lua
+
+  package:
+    name: Package preview
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the addon zip
+        run: |
+          python3 .github/scripts/release.py package --version "0.0.0-pr${{ github.event.pull_request.number }}"
+          mkdir preview && unzip -q dist/*.zip -d preview
+      - name: Upload it (download, extract into Interface/AddOns to try the change)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-pr${{ github.event.pull_request.number }}
+          path: preview/
+          retention-days: 14
